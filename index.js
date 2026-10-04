@@ -17,6 +17,7 @@ import { estaSilenciado } from './plugins/mute.js'
 import { getDB } from './database.js'
 import { iniciarSubbotsGuardados } from './plugins/subbotarranque.js'
 import { enviarAnimacion } from "./plugins/animaciones.js"
+import { verificarDependencias } from "./deps.js"
 
 const COMANDOS_ANIMADOS = new Set([
   'hug','kiss','pat','slap','patada','punch','patear','poke','tickle',
@@ -960,6 +961,11 @@ async function startLevi() {
   try {
     ensureFolders()
     printGoldenBanner()
+
+    // Sondeo de binarios externos (yt-dlp / ffmpeg). No bloquea el arranque:
+    // solo deja en consola qué falta y cómo instalarlo, para que un fallo de
+    // descargas no se confunda con un error del código.
+    await verificarDependencias(log)
 
     const credsPath = path.join(SESSION_PATH, "creds.json")
     const hasSession = fs.existsSync(credsPath)

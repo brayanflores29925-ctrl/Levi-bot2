@@ -1,12 +1,24 @@
+/**
+ * play.js — Buscador y descargador de YouTube
+ * Levi-Bot · Autor: riokuroxi-svg — github.com/riokuroxi-svg
+ */
+
 import ytSearch from 'yt-search'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import path from 'path'
+import { obtenerNumeroUsuario } from '../config.js'
+import {
+  estaDisponible,
+  explicarErrorDescarga,
+  mensajeFaltaDependencia,
+  tamanoMB,
+  LIMITE_MEDIA_MB
+} from '../deps.js'
 
 const execFileAsync = promisify(execFile)
 
-const pendientes = new Map()
 const TEMP_DIR = path.join(process.cwd(), 'temp')
 
 if (!fs.existsSync(TEMP_DIR)) {
@@ -21,27 +33,74 @@ function limpiarNombre(nombre) {
     .slice(0, 100)
 }
 
-async function descargar(url, args, opciones = {}) {
+// ── Búsquedas pendientes ────────────────────────────────────────────
+// Antes se guardaban solo por chatId. En un grupo, la búsqueda de un
+// usuario sobrescribía la del anterior y el primero recibía la canción
+// equivocada. Ahora la clave incluye al remitente y caduca a los 10
+// minutos, para que un reinicio o un olvido no dejen basura en memoria.
+const pendientes = new Map()
+const TTL_MS = 10 * 60 * 1000
+const LIMITE_PENDIENTES = 300
+
+function clavePendiente(m) {
+  const chatId = m?.chat || m?.key?.remoteJid || 'desconocido'
+  const numero = obtenerNumeroUsuario(m) || 'anonimo'
+  return `${chatId}|${numero}`
+}
+
+function limpiarExpirados() {
+  const ahora = Date.now()
+  for (const [clave, dato] of pendientes) {
+    if (ahora > dato.expira) pendientes.delete(clave)
+  }
+}
+
+function guardarPendiente(m, datos) {
+  limpiarExpirados()
+  if (pendientes.size >= LIMITE_PENDIENTES) {
+    pendientes.delete(pendientes.keys().next().value)
+  }
+  pendientes.set(clavePendiente(m), { ...datos, expira: Date.now() + TTL_MS })
+}
+
+function obtenerPendiente(m) {
+  const clave = clavePendiente(m)
+  const dato = pendientes.get(clave)
+  if (!dato) return null
+  if (Date.now() > dato.expira) {
+    pendientes.delete(clave)
+    return null
+  }
+  return dato
+}
+
+function borrarPendiente(m) {
+  pendientes.delete(clavePendiente(m))
+}
+
+async function descargar(args, opciones = {}) {
   const { timeout = 300000 } = opciones
 
   try {
-    const resultado = await execFileAsync(
-      'yt-dlp',
-      args,
-      {
-        timeout,
-        maxBuffer: 25 * 1024 * 1024
-      }
-    )
-
-    console.log('[PLAY] yt-dlp:', resultado.stdout || '')
+    const resultado = await execFileAsync('yt-dlp', args, {
+      timeout,
+      maxBuffer: 25 * 1024 * 1024
+    })
     return resultado
   } catch (error) {
-    console.error('[PLAY] yt-dlp ERROR:')
-    console.error(error.stderr || error.message)
+    console.error('[PLAY] yt-dlp ERROR:', error?.stderr || error?.message)
     throw error
   }
 }
+
+/**
+ * Formato con tope de 720p. Sin límite, yt-dlp puede traer 4K y el
+ * archivo completo se leía a RAM con readFileSync, lo que en un celular
+ * tumba el proceso por falta de memoria.
+ */
+const FORMATO_VIDEO =
+  'bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720][ext=mp4]/bv*+ba/b'
+const FORMATO_AUDIO = 'ba[ext=m4a]/ba/b'
 
 export default {
   name: 'play',
@@ -54,8 +113,8 @@ export default {
     if (!busqueda) {
       return enviar(
         '⚠️ *PLAY - DESCARGADOR*\n\n' +
-        'Escribe el nombre de una canción o vídeo.\n\n' +
-        '📌 *Ejemplo:* .play Feliz Navidad'
+          'Escribe el nombre de una canción o vídeo.\n\n' +
+          '📌 *Ejemplo:* .play Feliz Navidad'
       )
     }
 
@@ -69,9 +128,7 @@ export default {
         return enviar('❌ No se encontraron resultados.')
       }
 
-      console.log('[PLAY DEBUG] ytSearch OK:', video.url)
-
-      pendientes.set(chatId, {
+      guardarPendiente(m, {
         url: video.url,
         title: video.title
       })
@@ -79,9 +136,7 @@ export default {
       const titulo = video.title
       const canal = video.author?.name || 'Desconocido'
       const duracion = video.timestamp || 'N/A'
-      const vistas = video.views
-        ? Number(video.views).toLocaleString()
-        : 'N/A'
+      const vistas = video.views ? Number(video.views).toLocaleString() : 'N/A'
 
       const mensajePortada =
         '╭━━━━━━━━━━━━━━━━━━━━╮\n' +
@@ -93,7 +148,8 @@ export default {
         `👁️ *Vistas:* ${vistas}\n\n` +
         '👇 *Elige el formato de descarga:*\n\n' +
         '🎬 *.1* → Descargar Vídeo MP4\n' +
-        '🎧 *.2* → Descargar Audio MP3'
+        '🎧 *.2* → Descargar Audio MP3\n\n' +
+        '⏳ La elección caduca en 10 minutos.'
 
       try {
         const miniatura = video.thumbnail
@@ -101,30 +157,17 @@ export default {
         if (miniatura) {
           await sock.sendMessage(
             chatId,
-            {
-              image: { url: miniatura },
-              caption: mensajePortada
-            },
+            { image: { url: miniatura }, caption: mensajePortada },
             { quoted: m }
           )
         } else {
-          await sock.sendMessage(
-            chatId,
-            {
-              text: mensajePortada
-            },
-            { quoted: m }
-          )
+          await sock.sendMessage(chatId, { text: mensajePortada }, { quoted: m })
         }
-
-        console.log('[PLAY] Menú enviado correctamente.')
         return
       } catch (errorMenu) {
         console.error('[PLAY] Error enviando menú:', errorMenu)
-
         return enviar(mensajePortada)
       }
-
     } catch (error) {
       console.error('[LEVI] ERROR /play:', error)
       return enviar('❌ No se pudo realizar la búsqueda.')
@@ -134,7 +177,7 @@ export default {
   async seleccionar(sock, m, opcion) {
     const chatId = m.key?.remoteJid
     const opcionFinal = String(opcion).trim()
-    const pendiente = pendientes.get(chatId)
+    const pendiente = obtenerPendiente(m)
 
     if (!pendiente) {
       return sock.sendMessage(
@@ -142,7 +185,8 @@ export default {
         {
           text:
             '❌ *NO HAY UNA BÚSQUEDA PENDIENTE*\n\n' +
-            'Primero utiliza *.play <nombre de la canción>*.'
+            'Primero utiliza *.play <nombre de la canción>*.\n\n' +
+            'Las búsquedas caducan a los 10 minutos y se pierden si el bot se reinicia.'
         },
         { quoted: m }
       )
@@ -151,63 +195,59 @@ export default {
     let esVideo = false
     let esAudio = false
 
-    if (
-      opcionFinal === '.1' ||
-      opcionFinal === '1' ||
-      opcionFinal.includes('1.')
-    ) {
+    if (opcionFinal === '.1' || opcionFinal === '1' || opcionFinal.includes('1.')) {
       esVideo = true
-    } else if (
-      opcionFinal === '.2' ||
-      opcionFinal === '2' ||
-      opcionFinal.includes('2.')
-    ) {
+    } else if (opcionFinal === '.2' || opcionFinal === '2' || opcionFinal.includes('2.')) {
       esAudio = true
     } else {
       return sock.sendMessage(
         chatId,
-        {
-          text:
-            '⚠️ *Opción incorrecta*\n\n' +
-            '🎬 *.1* → Vídeo\n' +
-            '🎧 *.2* → Audio'
-        },
+        { text: '⚠️ *Opción incorrecta*\n\n🎬 *.1* → Vídeo\n🎧 *.2* → Audio' },
         { quoted: m }
       )
     }
 
-    pendientes.delete(chatId)
+    borrarPendiente(m)
 
-    const id =
-      `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    // Comprobación previa: sin yt-dlp la descarga no puede empezar.
+    // Antes se intentaba y el fallo salía como "formato no compatible".
+    if (!(await estaDisponible('yt-dlp'))) {
+      console.error('[PLAY] yt-dlp no está instalado.')
+      return sock.sendMessage(
+        chatId,
+        { text: mensajeFaltaDependencia('yt-dlp') },
+        { quoted: m }
+      )
+    }
 
-    const output = path.join(
-      TEMP_DIR,
-      `play-${id}.${esVideo ? 'mp4' : 'mp3'}`
-    )
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const output = path.join(TEMP_DIR, `play-${id}.${esVideo ? 'mp4' : 'mp3'}`)
 
     try {
       await sock.sendMessage(
         chatId,
         {
           text: esVideo
-            ? '⏳ *Descargando vídeo...*\n\nEstoy buscando automáticamente el mejor formato disponible 🎬'
+            ? `⏳ *Descargando vídeo...*\n\nMáximo 720p / ${LIMITE_MEDIA_MB} MB 🎬`
             : '⏳ *Descargando audio...*\n\nEstoy preparando el audio 🎧'
         },
         { quoted: m }
       )
 
-      if (esVideo) {
-        console.log('[PLAY] Descarga automática de vídeo...')
+      const argsBase = [
+        '--no-playlist',
+        '--force-overwrites',
+        '--no-warnings',
+        '--max-filesize',
+        `${esVideo ? LIMITE_MEDIA_MB : 32}m`
+      ]
 
+      if (esVideo) {
         await descargar(
-          pendiente.url,
           [
-            '--no-playlist',
-            '--force-overwrites',
-            '--no-warnings',
+            ...argsBase,
             '-f',
-            'bv*+ba/b',
+            FORMATO_VIDEO,
             '--merge-output-format',
             'mp4',
             '-o',
@@ -216,34 +256,12 @@ export default {
           ],
           { timeout: 300000 }
         )
-
-        if (!fs.existsSync(output)) {
-          throw new Error('yt-dlp no creó el vídeo final.')
-        }
-
-        const bufferVideo = fs.readFileSync(output)
-
-        await sock.sendMessage(
-          chatId,
-          {
-            video: bufferVideo,
-            mimetype: 'video/mp4',
-            caption: `📹 *${pendiente.title}*`
-          },
-          { quoted: m }
-        )
-
       } else {
-        console.log('[PLAY] Descarga automática de audio...')
-
         await descargar(
-          pendiente.url,
           [
-            '--no-playlist',
-            '--force-overwrites',
-            '--no-warnings',
+            ...argsBase,
             '-f',
-            'ba/b',
+            FORMATO_AUDIO,
             '-x',
             '--audio-format',
             'mp3',
@@ -255,20 +273,50 @@ export default {
           ],
           { timeout: 300000 }
         )
+      }
 
-        if (!fs.existsSync(output)) {
-          throw new Error('yt-dlp no creó el audio final.')
-        }
+      if (!fs.existsSync(output)) {
+        throw new Error('yt-dlp terminó pero no generó el archivo final.')
+      }
 
-        const bufferAudio = fs.readFileSync(output)
+      const stats = fs.statSync(output)
 
+      if (!stats.size) {
+        throw new Error('El archivo descargado está vacío.')
+      }
+
+      const tituloLimpio = limpiarNombre(pendiente.title)
+
+      // Por encima del límite se manda como documento: WhatsApp lo entrega
+      // completo y evitamos que la vista previa de video sature el envío.
+      if (stats.size > LIMITE_MEDIA_MB * 1024 * 1024) {
         await sock.sendMessage(
           chatId,
           {
-            audio: bufferAudio,
+            document: fs.readFileSync(output),
+            mimetype: esVideo ? 'video/mp4' : 'audio/mpeg',
+            fileName: `${tituloLimpio}.${esVideo ? 'mp4' : 'mp3'}`,
+            caption: `📦 *${pendiente.title}*\n\n${tamanoMB(stats.size)} MB`
+          },
+          { quoted: m }
+        )
+      } else if (esVideo) {
+        await sock.sendMessage(
+          chatId,
+          {
+            video: fs.readFileSync(output),
+            mimetype: 'video/mp4',
+            caption: `📹 *${pendiente.title}*`
+          },
+          { quoted: m }
+        )
+      } else {
+        await sock.sendMessage(
+          chatId,
+          {
+            audio: fs.readFileSync(output),
             mimetype: 'audio/mpeg',
-            fileName:
-              `${limpiarNombre(pendiente.title)}.mp3`,
+            fileName: `${tituloLimpio}.mp3`,
             ptt: false
           },
           { quoted: m }
@@ -278,42 +326,23 @@ export default {
       console.log(
         `[LEVI] PLAY enviado correctamente (${esVideo ? 'Video' : 'Audio'})`
       )
-
     } catch (error) {
-      console.error('[LEVI] ERROR selección PLAY:')
-      console.error(error.stderr || error.message || error)
+      const fallo = explicarErrorDescarga(error)
+      console.error('[LEVI] ERROR selección PLAY:', fallo.tipo, error?.stderr || error?.message)
 
-      await sock.sendMessage(
-        chatId,
-        {
-          text:
-            '❌ *No se pudo completar la descarga.*\n\n' +
-            'El vídeo o audio no está disponible en un formato compatible.'
-        },
-        { quoted: m }
-      )
-
+      await sock.sendMessage(chatId, { text: fallo.texto }, { quoted: m })
     } finally {
       try {
-        if (fs.existsSync(output)) {
-          fs.unlinkSync(output)
-        }
+        if (fs.existsSync(output)) fs.unlinkSync(output)
       } catch (errorLimpieza) {
-        console.error(
-          '[PLAY] No se pudo eliminar temporal:',
-          errorLimpieza.message
-        )
+        console.error('[PLAY] No se pudo eliminar temporal:', errorLimpieza.message)
       }
     }
   },
 
   register(sock) {
     sock.playSelection = (m, opcion) => {
-      return this.seleccionar(
-        sock,
-        m,
-        String(opcion).trim()
-      )
+      return this.seleccionar(sock, m, String(opcion).trim())
     }
   }
 }

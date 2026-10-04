@@ -1,7 +1,18 @@
+/**
+ * tiktok.js — Descargador de videos de TikTok
+ * Levi-Bot · Autor: riokuroxi-svg — github.com/riokuroxi-svg
+ */
+
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import path from 'path'
+import {
+  estaDisponible,
+  explicarErrorDescarga,
+  mensajeFaltaDependencia,
+  LIMITE_MEDIA_MB
+} from '../deps.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -26,6 +37,13 @@ export default {
       }, { quoted: m })
     }
 
+    if (!(await estaDisponible('yt-dlp'))) {
+      console.error('[TIKTOK] yt-dlp no está instalado.')
+      return sock.sendMessage(chatId, {
+        text: mensajeFaltaDependencia('yt-dlp')
+      }, { quoted: m })
+    }
+
     await sock.sendMessage(chatId, {
       text: '⏳ Procesando TikTok...'
     }, { quoted: m })
@@ -47,6 +65,8 @@ export default {
           'filename',
           '-f',
           'best[ext=mp4]/best',
+          '--max-filesize',
+          `${LIMITE_MEDIA_MB}m`,
           '-o',
           outputTemplate,
           url
@@ -95,23 +115,17 @@ export default {
       await fs.promises.unlink(archivo).catch(() => {})
 
     } catch (error) {
-      console.error('[TIKTOK PLUGIN ERROR]:', error?.stderr || error?.message || error)
+      const fallo = explicarErrorDescarga(error)
+      console.error('[TIKTOK PLUGIN ERROR]:', fallo.tipo, error?.stderr || error?.message || error)
 
-      let mensajeError = 'No se pudo descargar el video de TikTok.'
+      // Los tipos ya diagnosticados por deps.js llegan listos para el usuario.
+      // Solo el caso sin clasificar conserva el contexto de TikTok.
+      const texto =
+        fallo.tipo === 'desconocido'
+          ? `❌ *No se pudo descargar el video de TikTok.*\n\n${fallo.texto}`
+          : fallo.texto
 
-      if (error?.killed || error?.code === 'ETIMEDOUT') {
-        mensajeError = 'La descarga tardó demasiado y fue cancelada.'
-      } else if (String(error?.stderr || '').includes('Private')) {
-        mensajeError = 'El TikTok es privado y no se puede descargar.'
-      } else if (String(error?.stderr || '').includes('Unsupported URL')) {
-        mensajeError = 'El enlace de TikTok no es compatible.'
-      } else if (error?.message) {
-        mensajeError = error.message
-      }
-
-      await sock.sendMessage(chatId, {
-        text: `❌ Error en /tiktok: ${mensajeError}`
-      }, { quoted: m })
+      await sock.sendMessage(chatId, { text: texto }, { quoted: m })
     }
   }
 }
