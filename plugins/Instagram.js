@@ -1,9 +1,29 @@
+/**
+ * Instagram.js — Descargador de Reels, publicaciones y videos de Instagram
+ * Levi-Bot · Autor: riokuroxi-svg — github.com/riokuroxi-svg
+ */
+
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import path from 'path'
+import {
+  estaDisponible,
+  explicarErrorDescarga,
+  mensajeFaltaDependencia,
+  LIMITE_MEDIA_MB
+} from '../deps.js'
 
 const execFileAsync = promisify(execFile)
+
+// Instagram bloquea la extracción anónima la mayor parte del tiempo. Si el
+// usuario exporta sus cookies a cookies.txt en la raíz del bot, se usan
+// automáticamente y la descarga vuelve a funcionar.
+const COOKIES_FILE = path.join(process.cwd(), 'cookies.txt')
+
+function argsCookies() {
+  return fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : []
+}
 
 export default {
   name: 'Instagram',
@@ -24,6 +44,13 @@ export default {
       })
     }
 
+    if (!(await estaDisponible('yt-dlp'))) {
+      console.error('[INSTAGRAM] yt-dlp no está instalado.')
+      return sock.sendMessage(chatId, {
+        text: mensajeFaltaDependencia('yt-dlp')
+      })
+    }
+
     await sock.sendMessage(chatId, {
       text: '⏳ Procesando Instagram...'
     })
@@ -41,8 +68,10 @@ export default {
           '--no-playlist',
           '--print', 'title',
           '--print', 'filename',
-          '-f', 'bv*+ba/b',
+          '-f', 'bv*[height<=720]+ba/b[height<=720]/bv*+ba/b',
           '--merge-output-format', 'mp4',
+          '--max-filesize', `${LIMITE_MEDIA_MB}m`,
+          ...argsCookies(),
           '-o', outputTemplate,
           url
         ],
@@ -91,11 +120,22 @@ export default {
       await fs.promises.unlink(archivo).catch(() => {})
 
     } catch (error) {
-      console.error('Error en /Instagram:', error)
+      const fallo = explicarErrorDescarga(error)
+      console.error('Error en /Instagram:', fallo.tipo, error?.stderr || error?.message)
 
-      await sock.sendMessage(chatId, {
-        text: '❌ No pude descargar el contenido de Instagram.\n\nVerifica que el enlace sea público e inténtalo nuevamente.'
-      })
+      // Instagram es el caso donde más falla la vía anónima: si el diagnóstico
+      // apunta a autenticación, se indica cómo habilitar las cookies.
+      const extraCookies =
+        fallo.tipo === 'autenticacion'
+          ? '\n\n💡 *Solución:* exporta tus cookies de Instagram a un archivo `cookies.txt` en la raíz del bot y reinicia. El plugin las detecta solo.'
+          : ''
+
+      const texto =
+        fallo.tipo === 'desconocido'
+          ? '❌ No pude descargar el contenido de Instagram.\n\nVerifica que el enlace sea público e inténtalo nuevamente.'
+          : fallo.texto
+
+      await sock.sendMessage(chatId, { text: texto + extraCookies })
     }
   }
 }

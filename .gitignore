@@ -26,3 +26,6 @@ authcodes.json
 *.bak
 
 .env.save*
+
+# Cookies exportadas para descargadores (Instagram)
+cookies.txt

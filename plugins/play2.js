@@ -1,7 +1,17 @@
+/**
+ * play2.js — Descarga de audio desde una URL directa
+ * Levi-Bot · Autor: riokuroxi-svg — github.com/riokuroxi-svg
+ */
+
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import fs from 'fs'
 import path from 'path'
+import {
+  estaDisponible,
+  explicarErrorDescarga,
+  mensajeFaltaDependencia
+} from '../deps.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -31,6 +41,11 @@ export default {
 
     try {
       fs.mkdirSync(dir, { recursive: true })
+
+      if (!(await estaDisponible('yt-dlp'))) {
+        console.error('[PLAY2] yt-dlp no está instalado.')
+        return enviar(mensajeFaltaDependencia('yt-dlp'))
+      }
 
       await enviar('⏳ *Descargando audio...* 🎧')
 
@@ -67,8 +82,9 @@ export default {
         { quoted: m }
       )
     } catch (error) {
-      console.error('[PLAY2] Error:', error.stderr || error.message)
-      await enviar('❌ No se pudo descargar el audio.')
+      const fallo = explicarErrorDescarga(error)
+      console.error('[PLAY2] Error:', fallo.tipo, error?.stderr || error?.message)
+      await enviar(fallo.texto)
     } finally {
       try {
         if (fs.existsSync(salida)) fs.unlinkSync(salida)
