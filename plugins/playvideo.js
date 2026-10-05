@@ -16,6 +16,7 @@ import {
   estaDisponible,
   explicarErrorDescarga,
   mensajeFaltaDependencia,
+  argsPotProvider,
   LIMITE_MEDIA_MB
 } from '../deps.js'
 import { resolverExterno } from '../fuente-externa.js'
@@ -92,6 +93,7 @@ export default {
             'mp4',
             '--max-filesize',
             `${LIMITE_MEDIA_MB}m`,
+            ...argsPotProvider(),
             '-o',
             salida,
             video.url

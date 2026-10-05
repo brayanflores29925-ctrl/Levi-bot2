@@ -39,6 +39,41 @@ export const ES_TERMUX = (() => {
 /** Tope de tamaño para no saturar la RAM del dispositivo al enviar el archivo. */
 export const LIMITE_MEDIA_MB = 64
 
+/**
+ * Proveedor de PO tokens (bgutil-ytdlp-pot-provider). YouTube exige un
+ * "proof-of-origin token" a las IPs que trata como sospechosas (casi todas
+ * las de datacenter), y sin él responde "Sign in to confirm you're not a
+ * bot". El proveedor es un serviciito local que genera esos tokens y yt-dlp
+ * lo consulta solo si el plugin está instalado. Por defecto vive en
+ * http://127.0.0.1:4416; se puede apuntar a otro con BGUTIL_BASE_URL.
+ */
+export const POT_BASE_URL = String(
+  process.env.BGUTIL_BASE_URL || 'http://127.0.0.1:4416'
+).replace(/\/+$/, '')
+
+/** ¿Hay un proveedor de PO tokens escuchando? Nunca lanza. */
+export async function potProviderActivo() {
+  try {
+    const control = new AbortController()
+    const temporizador = setTimeout(() => control.abort(), 1500)
+    const respuesta = await fetch(`${POT_BASE_URL}/ping`, { signal: control.signal })
+    clearTimeout(temporizador)
+    return respuesta.status < 500
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Args extra para yt-dlp. Con el puerto por defecto yt-dlp encuentra el
+ * proveedor solo; solo hace falta pasar base_url si se movió de lugar.
+ */
+export function argsPotProvider() {
+  return process.env.BGUTIL_BASE_URL
+    ? ['--extractor-args', `youtubepot-bgutilhttp:base_url=${POT_BASE_URL}`]
+    : []
+}
+
 const cache = new Map()
 
 async function sondear(bin, args) {
@@ -126,6 +161,20 @@ export async function verificarDependencias(log = console.log) {
     } else {
       log('WARN', `${bin} presente pero no respondió: ${estado.message}`)
     }
+  }
+
+  // Proveedor de PO tokens: opcional, pero es lo que evita el "sign in to
+  // confirm you're not a bot" cuando el bot corre en un VPS / datacenter.
+  const pot = await potProviderActivo()
+  resumen.pot = pot
+  if (pot) {
+    log('OK', `POT provider activo en ${POT_BASE_URL} (yt-dlp evitara el chequeo de bot)`)
+  } else {
+    log(
+      'INFO',
+      `POT provider no detectado en ${POT_BASE_URL}. Opcional; ` +
+        `ver scripts/instalar-pot-provider.sh si el bot corre en un servidor.`
+    )
   }
 
   return resumen

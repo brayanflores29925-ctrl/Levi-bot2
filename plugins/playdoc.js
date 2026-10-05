@@ -14,7 +14,8 @@ import path from 'path'
 import {
   estaDisponible,
   explicarErrorDescarga,
-  mensajeFaltaDependencia
+  mensajeFaltaDependencia,
+  argsPotProvider
 } from '../deps.js'
 import { resolverExterno } from '../fuente-externa.js'
 
@@ -97,6 +98,7 @@ export default {
             '5',
             '--max-filesize',
             '32m',
+            ...argsPotProvider(),
             '-o',
             salida,
             video.url

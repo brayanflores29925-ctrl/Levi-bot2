@@ -66,3 +66,21 @@ El inventario completo se genera con:
 ```
 node scripts/listar-comandos.mjs
 ```
+
+## Si el bot corre en un servidor (VPS / datacenter)
+
+YouTube pide un "proof-of-origin token" a las IPs de datacenter y sin él
+responde *"Sign in to confirm you're not a bot"*, aunque tengas `yt-dlp`
+instalado. Eso se resuelve con un proveedor de PO tokens:
+
+```
+bash scripts/instalar-pot-provider.sh
+```
+
+El script instala el plugin de yt-dlp y el servidor bgutil, y te dice el
+comando para dejarlo corriendo en `http://127.0.0.1:4416`. El bot lo detecta
+solo al arrancar y te lo confirma en consola. Si lo mueves de puerto o de
+máquina, apunta al bot con la variable de entorno `BGUTIL_BASE_URL`.
+
+En Termux (IP residencial) normalmente no hace falta: el chequeo de bot
+aplica sobre todo a datacenters.

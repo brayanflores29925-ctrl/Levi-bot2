@@ -15,6 +15,7 @@ import {
   explicarErrorDescarga,
   mensajeFaltaDependencia,
   tamanoMB,
+  argsPotProvider,
   LIMITE_MEDIA_MB
 } from '../deps.js'
 
@@ -280,7 +281,8 @@ export default {
         '--force-overwrites',
         '--no-warnings',
         '--max-filesize',
-        `${esVideo ? LIMITE_MEDIA_MB : 32}m`
+        `${esVideo ? LIMITE_MEDIA_MB : 32}m`,
+        ...argsPotProvider()
       ]
 
       if (esVideo) {
