@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -7,9 +8,22 @@ const AUTH_PATH = path.join(__dirname, 'authdb.json')
 
 function load() {
   if (!fs.existsSync(AUTH_PATH)) {
-    const initial = { password: 'levi123', authorized: [] }
-    fs.writeFileSync(AUTH_PATH, JSON.stringify(initial, null, 2))
-    return initial
+    // Antes este archivo nacía con una contraseña fija y débil escrita en el
+    // código. Ahora se toma de la variable de entorno LEVI_AUTH_PASSWORD o,
+    // en su defecto, se genera una aleatoria que se muestra una sola vez en
+    // consola. Nada de eso queda versionado en el repositorio.
+    const inicial = {
+      password:
+        process.env.LEVI_AUTH_PASSWORD ||
+        crypto.randomBytes(9).toString('base64url'),
+      authorized: []
+    }
+    fs.writeFileSync(AUTH_PATH, JSON.stringify(inicial, null, 2))
+    console.log(
+      '[AUTH] authdb.json no existía: se creó con una contraseña nueva. ' +
+        'Guárdala; si la pierdes, bórralo y se generará otra al arrancar.'
+    )
+    return inicial
   }
   return JSON.parse(fs.readFileSync(AUTH_PATH, 'utf-8'))
 }
