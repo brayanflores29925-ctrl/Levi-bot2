@@ -1,7 +1,26 @@
-import ytSearch from 'yt-search'
-import axios from 'axios'
+/**
+ * playvideo.js — Descarga de video de YouTube por nombre
+ * Levi-Bot · Autor: riokuroxi-svg — github.com/riokuroxi-svg
+ *
+ * Antes dependía de una API de terceros encadenada a un proxy ajeno.
+ * Ahora usa el mismo yt-dlp local que el resto de descargadores, con
+ * los mensajes de error honestos de deps.js.
+ */
 
-const ALLDL_API = 'https://ahm7xmakki.com/api/alldl'
+import ytSearch from 'yt-search'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import fs from 'fs'
+import path from 'path'
+import {
+  estaDisponible,
+  explicarErrorDescarga,
+  mensajeFaltaDependencia,
+  LIMITE_MEDIA_MB
+} from '../deps.js'
+import { resolverExterno } from '../fuente-externa.js'
+
+const execFileAsync = promisify(execFile)
 
 export default {
   name: 'playvideo',
@@ -30,34 +49,78 @@ export default {
         })
       }
 
-      const respuesta = await axios.get(ALLDL_API, {
-        params: { url: video.url },
-        timeout: 30000
-      })
+      // Fuente externa primero: la IP del servidor no dialoga con YouTube.
+      let externo = null
+      try {
+        externo = await resolverExterno(video.url, 'video')
+      } catch (errorExterno) {
+        console.error('[PLAYVIDEO] fuente externa no disponible:', errorExterno?.message)
+      }
 
-      const datos = respuesta.data?.mediaInfo
-
-      if (!respuesta.data?.success || !datos?.videoUrl) {
+      if (externo?.urlMedia) {
         return sock.sendMessage(chatId, {
-          text: '❌ No pude obtener el video.'
+          video: { url: externo.urlMedia },
+          mimetype: 'video/mp4',
+          caption: `🎬 ${externo.titulo || video.title}`
+        })
+      }
+
+      if (!(await estaDisponible('yt-dlp'))) {
+        console.error('[PLAYVIDEO] yt-dlp no está instalado.')
+        return sock.sendMessage(chatId, {
+          text: mensajeFaltaDependencia('yt-dlp')
         })
       }
 
       await sock.sendMessage(chatId, {
-        text: `⏳ Descargando video...\n\n🎬 *${datos.title || video.title}*`
+        text: `⏳ Descargando video...\n\n🎬 *${video.title}*`
       })
 
-      await sock.sendMessage(chatId, {
-        video: { url: datos.videoUrl },
-        mimetype: 'video/mp4',
-        caption: `🎬 ${datos.title || video.title}`
-      })
+      const tempDir = path.join(process.cwd(), 'temp')
+      await fs.promises.mkdir(tempDir, { recursive: true })
+      const salida = path.join(tempDir, `playvideo-${Date.now()}.mp4`)
 
+      try {
+        await execFileAsync(
+          'yt-dlp',
+          [
+            '--no-playlist',
+            '--no-warnings',
+            '-f',
+            'bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720][ext=mp4]/bv*+ba/b',
+            '--merge-output-format',
+            'mp4',
+            '--max-filesize',
+            `${LIMITE_MEDIA_MB}m`,
+            '-o',
+            salida,
+            video.url
+          ],
+          { timeout: 300000, maxBuffer: 25 * 1024 * 1024 }
+        )
+
+        if (!fs.existsSync(salida)) {
+          throw new Error('yt-dlp terminó pero no generó el archivo.')
+        }
+
+        await sock.sendMessage(chatId, {
+          video: { url: salida },
+          mimetype: 'video/mp4',
+          caption: `🎬 ${video.title}`
+        })
+      } finally {
+        await fs.promises.unlink(salida).catch(() => {})
+      }
     } catch (error) {
-      console.error('Error en /playvideo:', error)
-      await sock.sendMessage(chatId, {
-        text: `❌ Error en /playvideo: ${error.message}`
-      })
+      const fallo = explicarErrorDescarga(error)
+      console.error('Error en /playvideo:', fallo.tipo, error?.stderr || error?.message)
+
+      const texto =
+        fallo.tipo === 'desconocido'
+          ? `❌ Error en /playvideo: ${error?.message || 'fallo desconocido'}`
+          : fallo.texto
+
+      await sock.sendMessage(chatId, { text: texto })
     }
   }
 }

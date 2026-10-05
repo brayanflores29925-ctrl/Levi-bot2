@@ -29,3 +29,16 @@ authcodes.json
 
 # Cookies exportadas para descargadores (Instagram)
 cookies.txt
+
+# ── Datos locales con información real: NUNCA se versionan ──
+# Contraseña y números autorizados del sistema de auth
+authdb.json
+# Base de usuarios (nombres, edades, JIDs)
+database.json
+# Estado de runtime con JIDs, números y mensajes reales
+data/*.json
+
+# Copias de seguridad locales y archivos muertos
+*.backup
+*.backup*
+descargar.js

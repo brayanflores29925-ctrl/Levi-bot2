@@ -1,4 +1,4 @@
-import { getDB, getUser } from '../database.js'
+import { getDB, getUser, saveDB } from '../database.js'
 
 export default {
   name: 'minivel',

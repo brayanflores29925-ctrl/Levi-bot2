@@ -16,14 +16,25 @@
 
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import fs from 'fs'
 import os from 'os'
 
 const execFileAsync = promisify(execFile)
 
-/** Termux se detecta por su PREFIX; ahí los paquetes se instalan con `pkg`. */
-export const ES_TERMUX =
-  String(process.env.PREFIX || '').includes('com.termux') ||
-  os.platform() === 'android'
+/**
+ * Detección de Termux. No basta con `process.env.PREFIX`: si el bot se
+ * lanza desde un supervisor, pm2 o un shell sin perfil, esa variable no
+ * llega al proceso y la detección falla (pasó en producción: el bot dijo
+ * "Linux" estando en Termux). Se combinan varias señales independientes.
+ */
+export const ES_TERMUX = (() => {
+  if (String(process.env.PREFIX || '').includes('com.termux')) return true
+  if (os.platform() === 'android') return true
+  if (String(process.env.HOME || os.homedir()).includes('com.termux')) return true
+  if (fs.existsSync('/data/data/com.termux/files/usr/bin/pkg')) return true
+  if (fs.existsSync('/data/data/com.termux')) return true
+  return false
+})()
 
 /** Tope de tamaño para no saturar la RAM del dispositivo al enviar el archivo. */
 export const LIMITE_MEDIA_MB = 64
@@ -74,11 +85,20 @@ export function instruccionInstalacion(bin) {
 
 export function mensajeFaltaDependencia(bin) {
   const entorno = ES_TERMUX ? 'Termux' : 'Linux'
+  const alterno = ES_TERMUX
+    ? bin === 'ffmpeg'
+      ? 'sudo apt install ffmpeg -y'
+      : 'sudo apt install python3-pip -y && pip3 install -U yt-dlp'
+    : bin === 'ffmpeg'
+      ? 'pkg install ffmpeg -y'
+      : 'pkg install python -y && pip install -U yt-dlp'
+
   return (
     `⚠️ *Falta instalar \`${bin}\`*\n\n` +
     `Los descargadores del bot dependen de ese programa y no está instalado en el servidor.\n\n` +
     `*Instalación (${entorno}):*\n` +
     `\`\`\`${instruccionInstalacion(bin)}\`\`\`\n\n` +
+    `¿Tu entorno es otro? Prueba: \`${alterno}\`\n\n` +
     `Cuando termine, reinicia el bot.`
   )
 }
