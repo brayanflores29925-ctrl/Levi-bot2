@@ -18,6 +18,7 @@ import {
   mensajeFaltaDependencia,
   LIMITE_MEDIA_MB
 } from '../deps.js'
+import { resolverExterno } from '../fuente-externa.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -45,6 +46,22 @@ export default {
       if (!video) {
         return sock.sendMessage(chatId, {
           text: '❌ No encontré ese video.'
+        })
+      }
+
+      // Fuente externa primero: la IP del servidor no dialoga con YouTube.
+      let externo = null
+      try {
+        externo = await resolverExterno(video.url, 'video')
+      } catch (errorExterno) {
+        console.error('[PLAYVIDEO] fuente externa no disponible:', errorExterno?.message)
+      }
+
+      if (externo?.urlMedia) {
+        return sock.sendMessage(chatId, {
+          video: { url: externo.urlMedia },
+          mimetype: 'video/mp4',
+          caption: `🎬 ${externo.titulo || video.title}`
         })
       }
 

@@ -9,6 +9,7 @@ import { promisify } from 'util'
 import fs from 'fs'
 import path from 'path'
 import { obtenerNumeroUsuario } from '../config.js'
+import { resolverExterno } from '../fuente-externa.js'
 import {
   estaDisponible,
   explicarErrorDescarga,
@@ -209,17 +210,6 @@ export default {
 
     borrarPendiente(m)
 
-    // Comprobación previa: sin yt-dlp la descarga no puede empezar.
-    // Antes se intentaba y el fallo salía como "formato no compatible".
-    if (!(await estaDisponible('yt-dlp'))) {
-      console.error('[PLAY] yt-dlp no está instalado.')
-      return sock.sendMessage(
-        chatId,
-        { text: mensajeFaltaDependencia('yt-dlp') },
-        { quoted: m }
-      )
-    }
-
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
     const output = path.join(TEMP_DIR, `play-${id}.${esVideo ? 'mp4' : 'mp3'}`)
 
@@ -228,11 +218,62 @@ export default {
         chatId,
         {
           text: esVideo
-            ? `⏳ *Descargando vídeo...*\n\nMáximo 720p / ${LIMITE_MEDIA_MB} MB 🎬`
-            : '⏳ *Descargando audio...*\n\nEstoy preparando el audio 🎧'
+            ? '⏳ *Descargando vídeo...* 🎬'
+            : '⏳ *Descargando audio...* 🎧'
         },
         { quoted: m }
       )
+
+      // 1) Fuente externa primero: así la IP del servidor no dialoga con
+      //    YouTube y no termina bloqueada ni pidiendo "inicia sesión".
+      //    Si ninguna fuente externa responde, se cae a yt-dlp local.
+      let externo = null
+      try {
+        externo = await resolverExterno(pendiente.url, esVideo ? 'video' : 'audio')
+      } catch (errorExterno) {
+        console.error('[PLAY] fuente externa no disponible:', errorExterno?.message)
+      }
+
+      if (externo?.urlMedia) {
+        const tituloLimpio = limpiarNombre(externo.titulo || pendiente.title)
+
+        if (esVideo) {
+          await sock.sendMessage(
+            chatId,
+            {
+              video: { url: externo.urlMedia },
+              mimetype: 'video/mp4',
+              caption: `📹 *${externo.titulo || pendiente.title}*`
+            },
+            { quoted: m }
+          )
+        } else {
+          await sock.sendMessage(
+            chatId,
+            {
+              audio: { url: externo.urlMedia },
+              mimetype: 'audio/mpeg',
+              fileName: `${tituloLimpio}.mp3`,
+              ptt: false
+            },
+            { quoted: m }
+          )
+        }
+
+        console.log(`[LEVI] PLAY enviado vía ${externo.origen}`)
+        return
+      }
+
+      // 2) Respaldo local. Sin yt-dlp la descarga no puede empezar, y antes
+      //    ese fallo salía disfrazado de "formato no compatible".
+      if (!(await estaDisponible('yt-dlp'))) {
+        console.error('[PLAY] externa falló y yt-dlp no está instalado.')
+        return sock.sendMessage(
+          chatId,
+          { text: mensajeFaltaDependencia('yt-dlp') },
+          { quoted: m }
+        )
+      }
 
       const argsBase = [
         '--no-playlist',

@@ -4,7 +4,9 @@ export default {
   category: 'Soporte',
   description: 'Información sobre Levi Bots Premium',
 
-  async execute({ sock, m }) {
+  // El loader llama execute(sock, m, parts, enviar) de forma posicional;
+  // una firma destructurada dejaba m en undefined y el comando reventaba.
+  async execute(sock, m) {
     const texto = `💎 *LEVI BOTS PREMIUM* 💎
 
 🤖 *¡ALQUILA TU PROPIO LEVI-BOT!*
